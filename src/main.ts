@@ -14,14 +14,14 @@ type Pass = {
   signedInBy?: string;
 };
 type AppState = { limit: number; students: Student[]; passes: Pass[] };
-type View = 'kiosk-login' | 'kiosk' | 'teacher-login' | 'teacher';
+type View = 'kiosk-login' | 'kiosk' | 'teacher-login' | 'teacher-register' | 'teacher';
 
 const pb = new PocketBase(import.meta.env.VITE_POCKETBASE_URL || 'http://127.0.0.1:8090', new BaseAuthStore());
 const kioskPb = new PocketBase(import.meta.env.VITE_POCKETBASE_URL || 'http://127.0.0.1:8090', new BaseAuthStore());
 pb.autoCancellation(false);
 
 const kioskSessionKey = 'hallpass.kiosk.session';
-const vaultKey = 'hallpass.encrypted.vault';
+const vaultKeyPrefix = 'hallpass.encrypted.vault.';
 const authKey = 'hallpass.prototype.auth';
 const defaultStudents: Student[] = [
   { id: '1042', name: 'Maya Chen' },
@@ -50,6 +50,12 @@ let noticeTimer = 0;
 let pendingMfa: { id: string; email: string; password: string; otpId?: string } | null = null;
 let submitting = false;
 let vaultPassword = '';
+
+function vaultKey() {
+  const teacherId = pb.authStore.record?.id;
+  if (!teacherId) throw new Error('Teacher authentication required');
+  return `${vaultKeyPrefix}${teacherId}`;
+}
 
 function bytesToBase64(bytes: Uint8Array) {
   return sodium.to_base64(bytes, sodium.base64_variants.ORIGINAL);
@@ -91,7 +97,7 @@ async function decryptVault(password: string, stored: string): Promise<AppState>
 async function persist() {
   if (!vaultPassword) return;
   const encrypted = await encryptVault(vaultPassword, state);
-  localStorage.setItem(vaultKey, encrypted);
+  localStorage.setItem(vaultKey(), encrypted);
   try {
     if (pb.authStore.isValid) {
       await pb.send('/api/hallway/vault', { method: 'PUT', body: { payload: encrypted, version: 1 } });
@@ -148,9 +154,25 @@ function loginView(mode: 'kiosk' | 'teacher') {
         <p id="login-error" class="form-error" role="alert"></p>
         <button class="button primary full" type="submit">${teacher ? 'Open teacher workspace' : 'Unlock this kiosk'}</button>
       </form>
+      ${teacher ? '<div class="switch-login">New to Hallway? <button class="link-button" data-action="register">Create a classroom account</button></div>' : ''}
       <div class="switch-login">${teacher ? 'Setting up a classroom device?' : 'Need reports and settings?'} <button class="link-button" data-action="switch-login">${teacher ? 'Open kiosk linking' : 'Teacher sign in'}</button></div>
     </section>
   </main>`, mode);
+}
+
+function registerView() {
+  return shell(`<main class="login-wrap">
+    <section class="login-copy"><p class="eyebrow">NEW CLASSROOM</p><h1>Create your private workspace.</h1><p>Each account represents one teacher and one classroom. Its student information is encrypted separately from every other workspace.</p><div class="privacy-note"><span class="lock-icon">▣</span><div><strong>Your password protects the encryption key</strong><br><span>We cannot recover classroom data without your password or recovery key.</span></div></div></section>
+    <section class="login-card" aria-labelledby="register-title"><div class="login-icon">+</div><p class="eyebrow">PUBLIC REGISTRATION</p><h2 id="register-title">Create an account</h2><p class="muted">No email messages are sent. Use an address you control and a unique password.</p>
+      <form id="register-form">
+        <label>Your name<input name="displayName" autocomplete="name" minlength="2" maxlength="80" required></label>
+        <label>Email address<input name="email" type="email" autocomplete="username" maxlength="254" required></label>
+        <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+        <label>Confirm password<input name="passwordConfirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+        <div class="warning-box"><strong>Important:</strong> If you lose both this password and your recovery key, your classroom data cannot be recovered.</div>
+        <p id="login-error" class="form-error" role="alert"></p><button class="button primary full" type="submit">Create private workspace</button>
+      </form><div class="switch-login">Already registered? <button class="link-button" data-action="teacher-login">Teacher sign in</button></div>
+    </section></main>`, 'teacher');
 }
 
 function kioskView() {
@@ -219,7 +241,7 @@ function teacherView() {
 
 function render() {
   const app = document.querySelector<HTMLDivElement>('#app')!;
-  app.innerHTML = view === 'kiosk-login' ? loginView('kiosk') : view === 'teacher-login' ? loginView('teacher') : view === 'kiosk' ? kioskView() : teacherView();
+  app.innerHTML = view === 'kiosk-login' ? loginView('kiosk') : view === 'teacher-login' ? loginView('teacher') : view === 'teacher-register' ? registerView() : view === 'kiosk' ? kioskView() : teacherView();
 }
 
 function showNotice(kind: 'approved' | 'denied' | 'returned', title: string, message: string) {
@@ -274,7 +296,7 @@ function showMfaForm() {
 async function finishTeacherLogin(password: string) {
   if (pb.authStore.record?.collectionName !== 'teachers') throw new Error('Wrong principal type');
   vaultPassword = password;
-  const encrypted = localStorage.getItem(vaultKey);
+  const encrypted = localStorage.getItem(vaultKey());
   if (encrypted) state = await decryptVault(password, encrypted);
   else await persist();
   localStorage.setItem(authKey, 'configured');
@@ -286,6 +308,31 @@ document.addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.target as HTMLFormElement;
   if (form.id === 'login-form') await handleLogin(form);
+  if (form.id === 'register-form') {
+    if (submitting) return;
+    const data = new FormData(form);
+    const displayName = String(data.get('displayName')).trim();
+    const email = String(data.get('email')).trim().toLowerCase();
+    const password = String(data.get('password'));
+    const passwordConfirm = String(data.get('passwordConfirm'));
+    const error = document.querySelector<HTMLParagraphElement>('#login-error')!;
+    if (password !== passwordConfirm) { error.textContent = 'The passwords do not match.'; return; }
+    submitting = true;
+    form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled = true;
+    try {
+      await pb.collection('teachers').create({ email, password, passwordConfirm, displayName, emailVisibility: false });
+      await pb.collection('teachers').authWithPassword(email, password);
+      state = structuredClone(defaultState);
+      await finishTeacherLogin(password);
+    } catch (caught) {
+      pb.authStore.clear();
+      const response = caught instanceof ClientResponseError ? caught.response as { data?: Record<string, { message?: string }> } : {};
+      error.textContent = response.data?.email?.message || response.data?.password?.message || 'The account could not be created. The email may already be registered.';
+    } finally {
+      submitting = false;
+      form.querySelector<HTMLButtonElement>('button[type="submit"]')?.removeAttribute('disabled');
+    }
+  }
   if (form.id === 'mfa-form' && pendingMfa) {
     const code = String(new FormData(form).get('code'));
     const error = document.querySelector<HTMLParagraphElement>('#login-error')!;
@@ -339,6 +386,8 @@ document.addEventListener('click', async (event) => {
   if (target.dataset.signin) { const pass = state.passes.find((item) => item.id === target.dataset.signin); if (pass) { pass.inAt = new Date().toISOString(); pass.signedInBy = 'Ms. Rivera'; await persist(); render(); } return; }
   const action = target.dataset.action;
   if (action === 'switch-login') { view = view === 'kiosk-login' ? 'teacher-login' : 'kiosk-login'; render(); }
+  if (action === 'register') { view = 'teacher-register'; render(); }
+  if (action === 'teacher-login') { view = 'teacher-login'; render(); }
   if (action === 'close-modal') { document.querySelector('.modal-backdrop')?.remove(); pendingStudent = null; }
   if (action === 'lock-kiosk') { localStorage.removeItem(kioskSessionKey); kioskPb.authStore.clear(); vaultPassword = ''; view = 'kiosk-login'; render(); }
   if (action === 'teacher-logout') { pb.authStore.clear(); vaultPassword = ''; view = 'teacher-login'; render(); }

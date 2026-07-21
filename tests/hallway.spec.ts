@@ -31,6 +31,43 @@ test('kiosk requires a one-time link code and never asks for teacher credentials
   await expect(page.getByText(/Never enter a teacher password/)).toBeVisible();
 });
 
+test('public registration creates a separate teacher classroom and signs in', async ({ page }) => {
+  let createBody: Record<string, unknown> = {};
+  await page.route('**/api/collections/teachers/records', async (route) => {
+    createBody = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ json: { id: 'newteacher00001', collectionId: 'teachers', collectionName: 'teachers', email: 'new@school.test', displayName: 'Taylor Reed', verified: false } });
+  });
+  await page.route('**/api/collections/teachers/auth-with-password', async (route) => {
+    await route.fulfill({ json: { token: fakeToken, record: { id: 'newteacher00001', collectionId: 'teachers', collectionName: 'teachers', verified: false } } });
+  });
+  await page.route('**/api/hallway/vault', async (route) => route.fulfill({ status: 204 }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Teacher sign in' }).click();
+  await page.getByRole('button', { name: 'Create a classroom account' }).click();
+  await page.getByLabel('Your name').fill('Taylor Reed');
+  await page.getByLabel('Email address').fill('new@school.test');
+  await page.getByLabel('Password', { exact: true }).fill('unique-classroom-password');
+  await page.getByLabel('Confirm password').fill('unique-classroom-password');
+  await page.getByRole('button', { name: 'Create private workspace' }).click();
+  await expect(page.getByRole('heading', { name: /Good morning/ })).toBeVisible();
+  expect(createBody).toMatchObject({ email: 'new@school.test', displayName: 'Taylor Reed', emailVisibility: false });
+});
+
+test('registration rejects mismatched passwords before contacting PocketBase', async ({ page }) => {
+  let requests = 0;
+  await page.route('**/api/collections/teachers/records', async (route) => { requests += 1; await route.abort(); });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Teacher sign in' }).click();
+  await page.getByRole('button', { name: 'Create a classroom account' }).click();
+  await page.getByLabel('Your name').fill('Taylor Reed');
+  await page.getByLabel('Email address').fill('new@school.test');
+  await page.getByLabel('Password', { exact: true }).fill('unique-classroom-password');
+  await page.getByLabel('Confirm password').fill('different-classroom-password');
+  await page.getByRole('button', { name: 'Create private workspace' }).click();
+  await expect(page.getByRole('alert')).toContainText('do not match');
+  expect(requests).toBe(0);
+});
+
 test('unknown student IDs fail without rendering attacker-controlled HTML', async ({ page }) => {
   await openKiosk(page);
   await page.getByLabel('Student ID').fill('9999');
