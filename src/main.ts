@@ -50,6 +50,7 @@ let noticeTimer = 0;
 let pendingMfa: { id: string; email: string; password: string; otpId?: string } | null = null;
 let submitting = false;
 let vaultPassword = '';
+let kioskDeviceId = '';
 
 function vaultKey() {
   const teacherId = pb.authStore.record?.id;
@@ -231,7 +232,7 @@ function analyticsPanel() {
 function securityPanel() {
   return `<section class="workspace-head"><div><p class="eyebrow">ACCOUNT & DEVICES</p><h1>Security</h1><p>Teacher and kiosk access are isolated from one another.</p></div></section>
   <section class="security-grid"><article class="panel"><span class="stat-icon green">✓</span><h2>Encryption is active</h2><p>Student records are encrypted in this browser with libsodium secretbox and an Argon2id password-derived key. PocketBase receives ciphertext only.</p><button class="button outline" data-action="recovery">Send recovery key to Google Drive</button><p class="danger-copy"><strong>If you lose both your password and recovery key, your student records cannot be recovered.</strong></p></article>
-  <article class="panel"><p class="eyebrow">ACTIVE DEVICES</p><h2>Signed-in sessions</h2><div class="device"><div><strong>This teacher workspace</strong><span>Held in memory · ends on refresh</span></div><span class="current">Current</span></div><div class="device"><div><strong>Room 214 kiosk</strong><span>Separate restricted device identity · refreshable</span></div><button class="button danger" data-action="remove-kiosk">Remove</button></div><button class="button outline full pair-button" data-action="pair-device">Link a new kiosk</button></article></section>`;
+  <article class="panel"><p class="eyebrow">ACTIVE DEVICES</p><h2>Signed-in sessions</h2><div class="device"><div><strong>This teacher workspace</strong><span>Held in memory · ends on refresh</span></div><span class="current">Current</span></div><div class="device"><div><strong>${kioskDeviceId ? 'Linked kiosk' : 'No linked kiosk'}</strong><span>${kioskDeviceId ? 'Separate restricted device identity · refreshable' : 'Create a one-time code to link a classroom device.'}</span></div></div><button class="button outline full pair-button" data-action="pair-device">Link a new kiosk</button></article></section>`;
 }
 
 function teacherView() {
@@ -263,6 +264,7 @@ async function handleLogin(form: HTMLFormElement) {
       const pairingCode = String(data.get('pairingCode')).trim();
       const result = await pb.send<{ token: string; record: Record<string, unknown> }>('/api/hallway/devices/pair', { method: 'POST', body: { pairingCode } });
       localStorage.setItem(kioskSessionKey, JSON.stringify({ token: result.token, record: result.record }));
+      kioskDeviceId = String(result.record.id || '');
       view = 'kiosk';
       render();
       return;
@@ -320,7 +322,7 @@ document.addEventListener('submit', async (event) => {
     submitting = true;
     form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled = true;
     try {
-      await pb.collection('teachers').create({ email, password, passwordConfirm, displayName, emailVisibility: false });
+      await pb.collection('teachers').create({ email, password, passwordConfirm, displayName });
       await pb.collection('teachers').authWithPassword(email, password);
       state = structuredClone(defaultState);
       await finishTeacherLogin(password);
@@ -391,7 +393,6 @@ document.addEventListener('click', async (event) => {
   if (action === 'close-modal') { document.querySelector('.modal-backdrop')?.remove(); pendingStudent = null; }
   if (action === 'lock-kiosk') { localStorage.removeItem(kioskSessionKey); kioskPb.authStore.clear(); vaultPassword = ''; view = 'kiosk-login'; render(); }
   if (action === 'teacher-logout') { pb.authStore.clear(); vaultPassword = ''; view = 'teacher-login'; render(); }
-  if (action === 'remove-kiosk') { try { await pb.send('/api/hallway/devices/revoke', { method: 'POST', body: { deviceId: 'room-214-kiosk' } }); target.closest('.device')?.remove(); } catch { window.alert('The device could not be removed. Try again.'); } }
   if (action === 'pair-device') { try { const result = await pb.send<{ code: string; expiresAt: string }>('/api/hallway/devices/link-code', { method: 'POST' }); document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop"><section class="modal export-modal"><button class="modal-close" data-action="close-modal" aria-label="Close">×</button><p class="eyebrow">ONE-TIME KIOSK LINK</p><h2 class="pairing-code">${escapeHtml(result.code)}</h2><p>Enter this code on the kiosk. It expires in 5 minutes and can be used once.</p><div class="warning-box">Do not enter your teacher password or verification code on a classroom kiosk.</div></section></div>`); } catch { window.alert('A link code could not be created. Try again.'); } }
   if (action === 'export') document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop"><section class="modal export-modal"><button class="modal-close" data-action="close-modal" aria-label="Close">×</button><div class="google-mark">G</div><p class="eyebrow">DEMO GOOGLE WORKSPACE</p><h2>Hallway analytics exported</h2><p>A Google Sheet with encrypted-source pass analytics has been created in <strong>Ms. Rivera's Drive</strong>.</p><div class="fake-sheet"><span></span><strong>Room 214 Hall Passes · July 2026</strong><small>Google Sheets · Demo connection</small></div><button class="button primary full" data-action="close-modal">Return to analytics</button></section></div>`);
   if (action === 'recovery') document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop"><section class="modal export-modal"><button class="modal-close" data-action="close-modal" aria-label="Close">×</button><div class="google-mark">G</div><p class="eyebrow">DEMO GOOGLE DRIVE</p><h2>Recovery key saved</h2><p>The recovery key was sent directly to a private Google Drive folder. This prototype does not download it to this device.</p><div class="warning-box"><strong>Critical:</strong> If you lose both your password and this recovery key, you cannot regain access to student records.</div><button class="button primary full" data-action="close-modal">I understand</button></section></div>`);
@@ -407,6 +408,7 @@ async function start() {
       kioskPb.authStore.save(session.token, session.record as never);
       const refreshed = await kioskPb.collection('kiosk_devices').authRefresh();
       localStorage.setItem(kioskSessionKey, JSON.stringify(refreshed));
+      kioskDeviceId = refreshed.record.id;
       view = 'kiosk';
     } catch {
       kioskPb.authStore.clear();

@@ -31,6 +31,17 @@ test('kiosk requires a one-time link code and never asks for teacher credentials
   await expect(page.getByText(/Never enter a teacher password/)).toBeVisible();
 });
 
+test('kiosk is visually subdued and approval remains high contrast', async ({ page }) => {
+  await openKiosk(page);
+  await expect(page.locator('.app-shell.kiosk')).toBeVisible();
+  await expect(page.locator('.app-shell.kiosk')).toHaveCSS('background-color', 'rgb(16, 24, 20)');
+  await page.getByLabel('Student ID').fill('5620');
+  await page.getByRole('button', { name: /Continue/ }).click();
+  await page.getByRole('button', { name: 'Request hall pass' }).click();
+  await expect(page.getByRole('status')).toHaveClass(/approved/);
+  await expect(page.getByRole('status')).toHaveCSS('background-color', 'rgb(20, 115, 68)');
+});
+
 test('public registration creates a separate teacher classroom and signs in', async ({ page }) => {
   let createBody: Record<string, unknown> = {};
   await page.route('**/api/collections/teachers/records', async (route) => {
@@ -50,7 +61,8 @@ test('public registration creates a separate teacher classroom and signs in', as
   await page.getByLabel('Confirm password').fill('unique-classroom-password');
   await page.getByRole('button', { name: 'Create private workspace' }).click();
   await expect(page.getByRole('heading', { name: /Good morning/ })).toBeVisible();
-  expect(createBody).toMatchObject({ email: 'new@school.test', displayName: 'Taylor Reed', emailVisibility: false });
+  expect(createBody).toMatchObject({ email: 'new@school.test', displayName: 'Taylor Reed' });
+  expect(createBody).not.toHaveProperty('emailVisibility');
 });
 
 test('registration rejects mismatched passwords before contacting PocketBase', async ({ page }) => {

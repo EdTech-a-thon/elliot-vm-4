@@ -1,16 +1,9 @@
-const LINK_TTL_SECONDS = 300;
-
-function requireTeacher(e) {
-  if (!e.auth || e.auth.collection().name !== "teachers") throw new ForbiddenError("Teacher access required");
-}
-
 routerAdd("POST", "/api/hallway/devices/link-code", (e) => {
-  requireTeacher(e);
   const code = $security.randomStringWithAlphabet(8, "0123456789");
   const record = new Record(e.app.findCollectionByNameOrId("device_link_codes"));
   record.set("codeHash", $security.sha256(code));
   record.set("teacher", e.auth.id);
-  record.set("expiresAt", new DateTime(new Date(Date.now() + LINK_TTL_SECONDS * 1000).toISOString()));
+  record.set("expiresAt", new DateTime(new Date(Date.now() + 300 * 1000).toISOString()));
   record.set("used", false);
   e.app.save(record);
   return e.json(200, { code, expiresAt: record.getString("expiresAt") });
@@ -41,7 +34,6 @@ routerAdd("POST", "/api/hallway/devices/pair", (e) => {
 }, $apis.requireGuestOnly(), $apis.bodyLimit(1024));
 
 routerAdd("POST", "/api/hallway/devices/revoke", (e) => {
-  requireTeacher(e);
   const body = new DynamicModel({ deviceId: "" });
   e.bindBody(body);
   const device = e.app.findFirstRecordByFilter("kiosk_devices", "id = {:id} && teacher = {:teacher}", { id: body.deviceId, teacher: e.auth.id });
@@ -52,7 +44,6 @@ routerAdd("POST", "/api/hallway/devices/revoke", (e) => {
 }, $apis.requireAuth("teachers"), $apis.bodyLimit(1024));
 
 routerAdd("PUT", "/api/hallway/vault", (e) => {
-  requireTeacher(e);
   const body = new DynamicModel({ payload: "", version: 0 });
   e.bindBody(body);
   if (body.payload.length < 40 || body.payload.length > 1048576 || body.version !== 1) throw new BadRequestError("Invalid encrypted vault");
@@ -67,7 +58,6 @@ routerAdd("PUT", "/api/hallway/vault", (e) => {
 }, $apis.requireAuth("teachers"), $apis.bodyLimit(1100000));
 
 routerAdd("GET", "/api/hallway/vault", (e) => {
-  requireTeacher(e);
   const vault = e.app.findFirstRecordByData("class_vaults", "teacher", e.auth.id);
   return e.json(200, { payload: vault.getString("payload"), version: vault.getInt("version") });
 }, $apis.requireAuth("teachers"));
