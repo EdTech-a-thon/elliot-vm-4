@@ -29,6 +29,7 @@ test('kiosk requires a one-time link code and never asks for teacher credentials
   await expect(page.getByLabel('One-time link code')).toBeVisible();
   await expect(page.getByLabel('Password')).toHaveCount(0);
   await expect(page.getByText(/Never enter a teacher password/)).toBeVisible();
+  await expect(page.getByText('Test environment · no production student data')).toBeVisible();
 });
 
 test('kiosk is visually subdued and approval remains high contrast', async ({ page }) => {

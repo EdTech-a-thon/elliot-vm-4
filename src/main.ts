@@ -132,7 +132,7 @@ function shell(content: string, mode: 'kiosk' | 'teacher') {
     <header class="topbar">
       <a class="brand" href="#" data-action="home"><span class="brand-mark">H</span><span>Hallway</span></a>
       <div class="mode-badge"><span></span>${mode === 'kiosk' ? 'Student kiosk' : 'Teacher workspace'}</div>
-    </header>${content}
+    </header>${content}<footer class="test-footer">Test environment · no production student data</footer>
   </div>`;
 }
 
