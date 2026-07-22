@@ -329,7 +329,7 @@ document.addEventListener('submit', async (event) => {
     } catch (caught) {
       pb.authStore.clear();
       const response = caught instanceof ClientResponseError ? caught.response as { data?: Record<string, { message?: string }> } : {};
-      error.textContent = response.data?.email?.message || response.data?.password?.message || 'The account could not be created. The email may already be registered.';
+      error.textContent = response.data?.email?.message || response.data?.password?.message || response.data?.displayName?.message || 'The account could not be created. Check your details and try again.';
     } finally {
       submitting = false;
       form.querySelector<HTMLButtonElement>('button[type="submit"]')?.removeAttribute('disabled');

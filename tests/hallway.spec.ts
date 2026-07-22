@@ -80,6 +80,21 @@ test('registration rejects mismatched passwords before contacting PocketBase', a
   expect(requests).toBe(0);
 });
 
+test('registration shows PocketBase password validation feedback', async ({ page }) => {
+  await page.route('**/api/collections/teachers/records', async (route) => {
+    await route.fulfill({ status: 400, json: { message: 'Failed to create record.', data: { password: { message: 'Must be at least 8 character(s).' } } } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Teacher sign in' }).click();
+  await page.getByRole('button', { name: 'Create a classroom account' }).click();
+  await page.getByLabel('Your name').fill('Taylor Reed');
+  await page.getByLabel('Email address').fill('new@school.test');
+  await page.getByLabel('Password', { exact: true }).fill('valid-browser-password');
+  await page.getByLabel('Confirm password').fill('valid-browser-password');
+  await page.getByRole('button', { name: 'Create private workspace' }).click();
+  await expect(page.getByRole('alert')).toContainText('Must be at least 8 character(s).');
+});
+
 test('unknown student IDs fail without rendering attacker-controlled HTML', async ({ page }) => {
   await openKiosk(page);
   await page.getByLabel('Student ID').fill('9999');
